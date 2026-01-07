@@ -20,7 +20,7 @@ const (
 	BotQQNumber    = 1851469506
 	MasterQQNumber = 2318607163
 	// TODO 建议通过环境变量获取：os.Getenv("DEEPSEEK_API_KEY")
-	DeepSeekAPIKey  = "sk-a538d60d53f24520b82a0ab82c197fcd"
+	DeepSeekAPIKey  = "DEEPSEEK_API_KEY"
 	DeepSeekBaseURL = "https://api.deepseek.com/chat/completions"
 )
 
