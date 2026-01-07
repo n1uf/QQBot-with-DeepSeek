@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +18,7 @@ import (
 
 // --- 配置区域 ---
 const (
-	ListenPort     = ":8080"
-	BotQQNumber    = 1851469506
-	MasterQQNumber = 2318607163
-	// TODO 建议通过环境变量获取：os.Getenv("DEEPSEEK_API_KEY")
-	DeepSeekAPIKey  = "DEEPSEEK_API_KEY"
+	ListenPort      = ":8080"
 	DeepSeekBaseURL = "https://api.deepseek.com/chat/completions"
 )
 
@@ -33,10 +31,28 @@ type QQEvent struct {
 }
 
 var (
-	upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	wsConn   *websocket.Conn
-	connMu   sync.Mutex
+	upgrader       = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	wsConn         *websocket.Conn
+	connMu         sync.Mutex
+	DeepSeekAPIKey string
+	BotQQNumber    int64
+	MasterQQNumber int64
 )
+
+func init() {
+	DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
+
+	// 尝试读取并转换，如果失败则给个提醒
+	botQQStr := os.Getenv("BOT_QQ")
+	masterQQStr := os.Getenv("MASTER_QQ")
+
+	if botQQStr == "" || masterQQStr == "" {
+		log.Println("⚠️  警告: BOT_QQ 或 MASTER_QQ 未设置，机器人可能无法识别艾特或主人身份")
+	}
+
+	BotQQNumber, _ = strconv.ParseInt(botQQStr, 10, 64)
+	MasterQQNumber, _ = strconv.ParseInt(masterQQStr, 10, 64)
+}
 
 // --- 逻辑分发器 ---
 
@@ -54,7 +70,7 @@ func dispatch(event QQEvent) {
 	// 2) 判定触发条件
 	isPrivate := event.MsgType == "private"
 	isAtMe := strings.Contains(event.RawContent, atMeCode) // 严格匹配艾特标签
-	isCalledMe := strings.Contains(event.Content, "小牛")  // 匹配名字
+	isCalledMe := strings.Contains(event.Content, "小牛")    // 匹配名字
 
 	// 3) 汇总触发状态
 	shouldRespond := isPrivate || isAtMe || isCalledMe
@@ -237,6 +253,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if DeepSeekAPIKey == "" {
+		log.Fatal("错误：未找到环境变量 DEEPSEEK_API_KEY，请先设置！")
+	}
 	http.HandleFunc("/ws", wsHandler)
 	log.Printf("🤖 小牛系统已就绪，端口%s", ListenPort)
 	if err := http.ListenAndServe(ListenPort, nil); err != nil {
