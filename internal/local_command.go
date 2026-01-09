@@ -13,5 +13,5 @@ func HandleLocalCommand(event QQEvent) {
 
 // ShouldHandleLocalCommand 判断是否应该处理本地命令
 func ShouldHandleLocalCommand(content string) bool {
-	return strings.HasPrefix(content, "niuf")
+	return strings.HasPrefix(content, "小牛")
 }

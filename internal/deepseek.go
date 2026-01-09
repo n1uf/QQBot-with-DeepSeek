@@ -14,9 +14,12 @@ import (
 // HandleAIChat 处理 AI 对话请求
 func HandleAIChat(event QQEvent) {
 	var hint string
-	if event.UserID == MasterQQNumber {
+	switch event.UserID {
+	case MasterQQNumber:
 		hint = "当前说话的是你的主人 niuf，对他要亲切一点。"
-	} else {
+	case MasterGirlFriendQQNumber:
+		hint = "当前说话的是你主人 niuf 的女朋友，你的主人很爱她，你要尊重她。"
+	default:
 		hint = "当前说话的是一位普通好友，保持礼貌即可。"
 	}
 
