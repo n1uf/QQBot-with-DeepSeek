@@ -32,6 +32,47 @@ func HandleAIChat(event QQEvent) {
 	sendReply(event, answer)
 }
 
+// HandleAtMasterChat 处理群聊中@主人的情况
+func HandleAtMasterChat(event QQEvent) {
+	hint := "当前有人在群里@了你的主人 niuf，请帮他回复一下，语气要友好。"
+
+	log.Printf("[@主人] <- 群:%d 用户:%d 内容:%s", event.GroupID, event.UserID, event.Content)
+
+	// 如果消息为空，给个默认回复
+	content := event.Content
+	if content == "" {
+		content = "有人@了主人"
+	}
+
+	answer, err := callDeepSeek(content, hint)
+	if err != nil {
+		log.Printf("[AI] 出错: %v", err)
+		sendReply(event, "小牛有点累了，稍后再试吧...")
+		return
+	}
+
+	sendReply(event, answer)
+}
+
+// ShouldHandleAtMasterChat 判断是否应该处理@主人的情况（仅群聊）
+func ShouldHandleAtMasterChat(event QQEvent) bool {
+	// 只处理群聊
+	if event.MsgType != "group" || event.GroupID == 0 {
+		return false
+	}
+
+	// 检查是否设置了主人QQ号
+	if MasterQQNumber == 0 {
+		return false
+	}
+
+	// 构造@主人的CQ码
+	atMasterCode := fmt.Sprintf("[CQ:at,qq=%d]", MasterQQNumber)
+
+	// 检查是否@了主人
+	return strings.Contains(event.RawContent, atMasterCode)
+}
+
 // ShouldHandleAIChat 判断是否应该触发 AI 对话
 func ShouldHandleAIChat(event QQEvent) bool {
 	// 构造精准的艾特标识

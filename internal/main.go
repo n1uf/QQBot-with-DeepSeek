@@ -67,7 +67,13 @@ func dispatch(event QQEvent) {
 		return
 	}
 
-	// 2. AI 对话
+	// 2. 群聊中@主人（优先级高于普通AI对话）
+	if ShouldHandleAtMasterChat(event) {
+		go HandleAtMasterChat(event)
+		return
+	}
+
+	// 3. AI 对话
 	if ShouldHandleAIChat(event) {
 		if event.Content == "" {
 			sendReply(event, "干嘛？艾特我又不说话，是不是想我了？")
