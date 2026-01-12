@@ -25,11 +25,13 @@ func HandleAIChat(event QQEvent) {
 
 	log.Printf("[收到] <- 用户:%d 内容:%s", event.UserID, event.Content)
 
-	// 私聊时使用对话历史，群聊时不使用
+	// 私聊时使用对话历史，群聊时使用群聊上下文和对话历史
 	var answer string
 	var err error
 	if event.MsgType == "private" {
 		answer, err = callDeepSeekWithHistory(event.UserID, event.Content, hint)
+	} else if event.MsgType == "group" && event.GroupID > 0 {
+		answer, err = callDeepSeekWithGroupContext(event.GroupID, event.UserID, event.Content, hint)
 	} else {
 		answer, err = callDeepSeek(event.Content, hint)
 	}
@@ -55,7 +57,8 @@ func HandleAtMasterChat(event QQEvent) {
 		content = "有人@了主人"
 	}
 
-	answer, err := callDeepSeek(content, hint)
+	// 使用群聊上下文
+	answer, err := callDeepSeekWithGroupContext(event.GroupID, event.UserID, content, hint)
 	if err != nil {
 		log.Printf("[AI] 出错: %v", err)
 		sendReply(event, "小牛有点累了，稍后再试吧...")
@@ -118,6 +121,12 @@ func callDeepSeekWithHistory(userID int64, content string, roleHint string) (str
 		"content": content,
 	})
 
+	// 打印完整的消息列表（JSON格式）
+	messagesJSON, _ := json.MarshalIndent(messages, "", "  ")
+	fmt.Printf("\n========== 私聊AI - 发送给AI的完整消息 ==========\n")
+	fmt.Printf("%s\n", messagesJSON)
+	fmt.Printf("==========================================\n\n")
+
 	// 调用 API
 	answer, err := callDeepSeekAPI(messages)
 	if err != nil {
@@ -127,6 +136,57 @@ func callDeepSeekWithHistory(userID int64, content string, roleHint string) (str
 	// 添加用户消息和助手回复到历史
 	conv.addUserMessage(content)
 	conv.addAssistantMessage(answer)
+
+	return answer, nil
+}
+
+// callDeepSeekWithGroupContext 调用 DeepSeek API（使用群聊上下文，用于群聊）
+func callDeepSeekWithGroupContext(groupID int64, userID int64, content string, roleHint string) (string, error) {
+	// 构建系统提示词
+	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。\n\n你正在一个QQ群聊中。群聊中的用户用昵称标识。注意：群聊消息中的\"你\"指的是你自己（小牛）。%s", roleHint)
+
+	messages := []map[string]string{
+		{"role": "system", "content": systemMessage},
+	}
+
+	// 先添加当前消息到上下文（这样它就会成为最后一条）
+	addGroupContextMessage(groupID, userID, content)
+
+	// 获取群聊上下文（除最后一条外的所有消息）和最后一条消息
+	groupContext, lastMsg := getGroupContextForAI(groupID)
+
+	// 添加群聊上下文（除最后一条外的所有消息）
+	if groupContext != "" {
+		messages = append(messages, map[string]string{
+			"role":    "user",
+			"content": groupContext,
+		})
+	}
+
+	// 添加最后一条消息（当前消息，使用昵称）
+	if lastMsg != nil {
+		nickname := getNickname(groupID, lastMsg.UserID)
+		currentMsg := fmt.Sprintf("%s: %s", nickname, lastMsg.Content)
+		messages = append(messages, map[string]string{
+			"role":    "user",
+			"content": currentMsg,
+		})
+	}
+
+	// 打印完整的消息列表（JSON格式）
+	messagesJSON, _ := json.MarshalIndent(messages, "", "  ")
+	fmt.Printf("\n========== 群聊AI - 发送给AI的完整消息 ==========\n")
+	fmt.Printf("%s\n", messagesJSON)
+	fmt.Printf("==========================================\n\n")
+
+	// 调用 API
+	answer, err := callDeepSeekAPI(messages)
+	if err != nil {
+		return "", err
+	}
+
+	// 将AI回复添加到群聊上下文
+	addGroupContextMessage(groupID, BotQQNumber, answer)
 
 	return answer, nil
 }

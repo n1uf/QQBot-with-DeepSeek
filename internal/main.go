@@ -114,7 +114,37 @@ func parseEvent(raw map[string]interface{}) QQEvent {
 	}
 	ev.Content = strings.TrimSpace(ev.Content)
 
+	// 提取昵称并更新映射（群聊时）
+	if ev.MsgType == "group" && ev.GroupID > 0 && ev.UserID > 0 {
+		nickname := extractNickname(raw)
+		if nickname != "" {
+			updateNicknameMap(ev.GroupID, ev.UserID, nickname)
+		} else {
+			log.Printf("[DEBUG] 未提取到昵称: 群%d 用户%d，将使用稳定标识符", ev.GroupID, ev.UserID)
+		}
+		// 添加到群聊上下文（所有群聊消息都添加）
+		if ev.Content != "" && ev.UserID != BotQQNumber {
+			addGroupContextMessage(ev.GroupID, ev.UserID, ev.Content)
+		}
+	}
+
 	return ev
+}
+
+// extractNickname 从消息中提取昵称
+func extractNickname(raw map[string]interface{}) string {
+	// 尝试从 sender 中获取
+	if sender, ok := raw["sender"].(map[string]interface{}); ok {
+		// 优先使用群名片（card）
+		if card, ok := sender["card"].(string); ok && card != "" {
+			return card
+		}
+		// 其次使用昵称（nickname）
+		if nickname, ok := sender["nickname"].(string); ok && nickname != "" {
+			return nickname
+		}
+	}
+	return ""
 }
 
 func sendReply(e QQEvent, text string) {
