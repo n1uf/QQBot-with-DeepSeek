@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"strings"
 )
 
 // HandleLocalCommand 处理本地命令（以 niuf 开头的消息）
@@ -13,5 +12,5 @@ func HandleLocalCommand(event QQEvent) {
 
 // ShouldHandleLocalCommand 判断是否应该处理本地命令
 func ShouldHandleLocalCommand(content string) bool {
-	return strings.HasPrefix(content, "小牛")
+	return content == "小牛"
 }
