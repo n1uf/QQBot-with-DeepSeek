@@ -14,15 +14,26 @@ import (
 // HandleAIChat 处理 AI 对话请求
 func HandleAIChat(event QQEvent) {
 	var hint string
-	if event.UserID == MasterQQNumber {
+	switch event.UserID {
+	case MasterQQNumber:
 		hint = "当前说话的是你的主人 niuf，对他要亲切一点。"
-	} else {
+	case MasterGirlFriendQQNumber:
+		hint = "当前说话的是你主人 niuf 的女朋友，你的主人很爱她，你要尊重她。"
+	default:
 		hint = "当前说话的是一位普通好友，保持礼貌即可。"
 	}
 
 	log.Printf("[收到] <- 用户:%d 内容:%s", event.UserID, event.Content)
 
-	answer, err := callDeepSeek(event.Content, hint)
+	// 私聊时使用对话历史，群聊时不使用
+	var answer string
+	var err error
+	if event.MsgType == "private" {
+		answer, err = callDeepSeekWithHistory(event.UserID, event.Content, hint)
+	} else {
+		answer, err = callDeepSeek(event.Content, hint)
+	}
+
 	if err != nil {
 		log.Printf("[AI] 出错: %v", err)
 		sendReply(event, "小牛有点累了，稍后再试吧...")
@@ -87,16 +98,56 @@ func ShouldHandleAIChat(event QQEvent) bool {
 	return isPrivate || isAtMe || isCalledMe
 }
 
-// callDeepSeek 调用 DeepSeek API
+// callDeepSeekWithHistory 调用 DeepSeek API（带对话历史，用于私聊）
+func callDeepSeekWithHistory(userID int64, content string, roleHint string) (string, error) {
+	// 获取对话历史
+	conv := getOrCreateConversation(userID)
+
+	// 构建消息列表
+	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s", roleHint)
+	messages := []map[string]string{
+		{"role": "system", "content": systemMessage},
+	}
+
+	// 添加历史消息（不包括当前消息）
+	messages = append(messages, conv.getMessages()...)
+
+	// 添加当前用户消息
+	messages = append(messages, map[string]string{
+		"role":    "user",
+		"content": content,
+	})
+
+	// 调用 API
+	answer, err := callDeepSeekAPI(messages)
+	if err != nil {
+		return "", err
+	}
+
+	// 添加用户消息和助手回复到历史
+	conv.addUserMessage(content)
+	conv.addAssistantMessage(answer)
+
+	return answer, nil
+}
+
+// callDeepSeek 调用 DeepSeek API（不带历史，用于群聊）
 func callDeepSeek(content string, roleHint string) (string, error) {
 	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s", roleHint)
 
+	messages := []map[string]string{
+		{"role": "system", "content": systemMessage},
+		{"role": "user", "content": content},
+	}
+
+	return callDeepSeekAPI(messages)
+}
+
+// callDeepSeekAPI 实际调用 DeepSeek API
+func callDeepSeekAPI(messages []map[string]string) (string, error) {
 	payload := map[string]interface{}{
-		"model": "deepseek-chat",
-		"messages": []map[string]string{
-			{"role": "system", "content": systemMessage},
-			{"role": "user", "content": content},
-		},
+		"model":       "deepseek-chat",
+		"messages":    messages,
 		"temperature": 0.7,
 	}
 
