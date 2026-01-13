@@ -144,10 +144,6 @@ QQBot-with-DeepSeek/
 - 建议设置 `BOT_QQ` 和 `MASTER_QQ` 环境变量以获得更好的体验
 - WebSocket 连接断开后会自动重连（需要 NapCat 支持）
 
-## 许可证
-
-本项目采用 MIT 许可证。
-
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request！
