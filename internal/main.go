@@ -78,10 +78,10 @@ func dispatch(event QQEvent) {
 
 	// 3. AI 对话
 	if ShouldHandleAIChat(event) {
-		if event.Content == "" {
-			sendReply(event, "干嘛？艾特我又不说话，是不是想我了？")
-			return
-		}
+		//if event.Content == "" {
+		//	sendReply(event, "干嘛？艾特我又不说话，是不是想我了？")
+		//	return
+		//}
 		go HandleAIChat(event)
 	}
 }

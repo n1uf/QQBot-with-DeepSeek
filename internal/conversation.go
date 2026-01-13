@@ -47,6 +47,13 @@ type GroupContext struct {
 	mu       sync.RWMutex
 }
 
+// GroupNicknameMap 群昵称映射（持久化）
+type GroupNicknameMap struct {
+	GroupID   int64            `json:"group_id"`
+	Nicknames map[int64]string `json:"nicknames"` // QQ号 -> 昵称
+	mu        sync.RWMutex
+}
+
 var (
 	// 内存中存储的对话历史（仅私聊）
 	privateConversations sync.Map // map[int64]*Conversation
@@ -54,8 +61,8 @@ var (
 	// 群聊上下文（持久化）
 	groupContexts sync.Map // map[int64]*GroupContext
 
-	// 昵称映射（按群分开）
-	groupNicknameMap sync.Map // map[int64]*sync.Map，群ID -> (map[int64]string，QQ号 -> 昵称)
+	// 昵称映射（按群分开，持久化）
+	groupNicknameMap sync.Map // map[int64]*GroupNicknameMap
 )
 
 // getOrCreateConversation 获取或创建用户的对话历史
@@ -182,6 +189,7 @@ func loadConversationFromFile(userID int64) *Conversation {
 }
 
 // clearConversation 清空用户的对话历史（用于测试或重置）
+// 注意：此函数当前未被使用，保留用于调试或管理功能
 func clearConversation(userID int64) {
 	privateConversations.Delete(userID)
 	filename := filepath.Join(HistoryDataDir, fmt.Sprintf("user_%d.json", userID))
@@ -189,19 +197,49 @@ func clearConversation(userID int64) {
 	log.Printf("[对话历史] 已清空用户 %d 的对话历史", userID)
 }
 
-// --- 昵称映射管理 ---
+// --- 昵称映射管理（持久化）---
 
-// updateNicknameMap 更新昵称映射（按群分开）
+// getOrCreateGroupNicknameMap 获取或创建群的昵称映射（从文件加载）
+func getOrCreateGroupNicknameMap(groupID int64) *GroupNicknameMap {
+	// 先从内存中查找
+	if mapInterface, ok := groupNicknameMap.Load(groupID); ok {
+		return mapInterface.(*GroupNicknameMap)
+	}
+
+	// 尝试从文件加载
+	nm := loadGroupNicknameMapFromFile(groupID)
+	if nm == nil {
+		// 创建新的昵称映射
+		nm = &GroupNicknameMap{
+			GroupID:   groupID,
+			Nicknames: make(map[int64]string),
+		}
+	}
+
+	// 存储到内存
+	groupNicknameMap.Store(groupID, nm)
+	return nm
+}
+
+// updateNicknameMap 更新昵称映射（按群分开，自动保存）
 func updateNicknameMap(groupID int64, userID int64, nickname string) {
 	if nickname == "" || groupID == 0 {
 		return
 	}
 
-	// 获取或创建该群的昵称映射
-	nicknameMapInterface, _ := groupNicknameMap.LoadOrStore(groupID, &sync.Map{})
-	nicknameMap := nicknameMapInterface.(*sync.Map)
+	nm := getOrCreateGroupNicknameMap(groupID)
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
 
-	nicknameMap.Store(userID, nickname)
+	// 检查是否有变化
+	if oldNickname, exists := nm.Nicknames[userID]; exists && oldNickname == nickname {
+		return // 没有变化，不需要保存
+	}
+
+	nm.Nicknames[userID] = nickname
+
+	// 异步保存到文件
+	go nm.saveToFile()
 }
 
 // getNickname 获取用户昵称，如果不存在则返回稳定标识符
@@ -214,27 +252,21 @@ func getNickname(groupID int64, userID int64) string {
 		nickname = getUserStableID(userID)
 	} else {
 		// 获取该群的昵称映射
-		nicknameMapInterface, ok := groupNicknameMap.Load(groupID)
-		if !ok {
-			// 群不存在，返回稳定标识符
-			nickname = getUserStableID(userID)
+		nm := getOrCreateGroupNicknameMap(groupID)
+		nm.mu.RLock()
+		if n, ok := nm.Nicknames[userID]; ok && n != "" {
+			nickname = n
 		} else {
-			nicknameMap := nicknameMapInterface.(*sync.Map)
-			if n, ok := nicknameMap.Load(userID); ok {
-				nickname = n.(string)
-				if nickname == "" {
-					nickname = getUserStableID(userID)
-				}
-			} else {
-				// 后备：使用稳定标识符
-				nickname = getUserStableID(userID)
-			}
+			nickname = getUserStableID(userID)
 		}
+		nm.mu.RUnlock()
 	}
 
 	// 特殊处理：如果是主人女朋友，在昵称后加上标识
 	if userID == MasterGirlFriendQQNumber && MasterGirlFriendQQNumber > 0 {
 		return fmt.Sprintf("%s（主人的女朋友）", nickname)
+	} else if userID == MasterQQNumber && MasterQQNumber > 0 {
+		return fmt.Sprintf("%s（主人）", nickname)
 	}
 
 	return nickname
@@ -349,11 +381,11 @@ func getGroupContextForAI(groupID int64) (context string, lastMessage *GroupCont
 	contextMsg := "群聊消息：\n"
 	for _, msg := range contextMessages {
 		// 如果是AI自己的消息，用"你:"标识
-		if msg.UserID == BotQQNumber {
+		if msg.UserID == BotQQNumber || msg.UserID == 0 {
 			contextMsg += fmt.Sprintf("- 你: %s\n", msg.Content)
 		} else {
 			nickname := getNickname(groupID, msg.UserID)
-			contextMsg += fmt.Sprintf("- %s: %s\n", nickname, msg.Content)
+			contextMsg += fmt.Sprintf("- [%s]: %s\n", nickname, msg.Content)
 		}
 	}
 
@@ -401,4 +433,46 @@ func loadGroupContextFromFile(groupID int64) *GroupContext {
 	}
 
 	return &ctx
+}
+
+// saveToFile 保存群昵称映射到文件
+func (nm *GroupNicknameMap) saveToFile() {
+	nm.mu.RLock()
+	defer nm.mu.RUnlock()
+
+	// 确保目录存在
+	if err := os.MkdirAll(HistoryDataDir, 0755); err != nil {
+		log.Printf("[昵称映射] 创建目录失败: %v", err)
+		return
+	}
+
+	filename := filepath.Join(HistoryDataDir, fmt.Sprintf("group_%d_nicknames.json", nm.GroupID))
+	data, err := json.MarshalIndent(nm, "", "  ")
+	if err != nil {
+		log.Printf("[昵称映射] 序列化失败: %v", err)
+		return
+	}
+
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		log.Printf("[昵称映射] 保存文件失败: %v", err)
+	}
+}
+
+// loadGroupNicknameMapFromFile 从文件加载群昵称映射
+func loadGroupNicknameMapFromFile(groupID int64) *GroupNicknameMap {
+	filename := filepath.Join(HistoryDataDir, fmt.Sprintf("group_%d_nicknames.json", groupID))
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		// 文件不存在是正常的
+		return nil
+	}
+
+	var nm GroupNicknameMap
+	if err := json.Unmarshal(data, &nm); err != nil {
+		log.Printf("[昵称映射] 加载文件失败: %v", err)
+		return nil
+	}
+
+	return &nm
 }
