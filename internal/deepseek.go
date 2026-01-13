@@ -107,7 +107,7 @@ func callDeepSeekWithHistory(userID int64, content string, roleHint string) (str
 	conv := getOrCreateConversation(userID)
 
 	// 构建消息列表
-	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s", roleHint)
+	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s\n\n请像人类一样自然地说话，不要分点论述，不要用列表格式，用自然的对话方式回复。", roleHint)
 	messages := []map[string]string{
 		{"role": "system", "content": systemMessage},
 	}
@@ -143,7 +143,7 @@ func callDeepSeekWithHistory(userID int64, content string, roleHint string) (str
 // callDeepSeekWithGroupContext 调用 DeepSeek API（使用群聊上下文，用于群聊）
 func callDeepSeekWithGroupContext(groupID int64, userID int64, content string, roleHint string) (string, error) {
 	// 构建系统提示词
-	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。\n\n你正在一个QQ群聊中。群聊中的用户用昵称标识。注意：群聊消息中的\"你\"指的是你自己（小牛）。%s", roleHint)
+	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。\n\n你正在一个QQ群聊中。群聊中的用户用昵称标识。注意：群聊消息中的\"你\"指的是你自己（小牛）。%s\n\n请像人类一样自然地说话，不要分点论述，不要用列表格式，用自然的对话方式回复。", roleHint)
 
 	messages := []map[string]string{
 		{"role": "system", "content": systemMessage},
@@ -193,7 +193,7 @@ func callDeepSeekWithGroupContext(groupID int64, userID int64, content string, r
 
 // callDeepSeek 调用 DeepSeek API（不带历史，用于群聊）
 func callDeepSeek(content string, roleHint string) (string, error) {
-	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s", roleHint)
+	systemMessage := fmt.Sprintf("你是一个幽默的助手小牛。你的主人是 niuf。%s\n\n请像人类一样自然地说话，不要分点论述，不要用列表格式，用自然的对话方式回复。", roleHint)
 
 	messages := []map[string]string{
 		{"role": "system", "content": systemMessage},
