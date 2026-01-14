@@ -10,9 +10,12 @@
   - 私聊消息自动回复
   - 群聊中艾特机器人
   - 消息中包含"小牛"关键词
-- ⚡ **本地命令**：支持以 `niuf` 开头的本地命令
-- 🔒 **主人识别**：可识别主人身份，提供个性化回复
+  - 群聊中@主人时自动代为回复
+- ⚡ **本地命令**：支持本地命令处理（如"小牛"）
+- 🔒 **身份识别**：可识别主人、主人女朋友等特殊身份，提供个性化回复
 - 🔁 **重复消息检测**：群聊中连续 3 条相同消息时自动回复相同内容
+- 💾 **对话历史**：私聊和群聊上下文记忆，支持最多 50 条历史消息
+- 👤 **昵称映射**：自动识别并记忆群聊中的用户昵称，持久化存储
 
 ## 技术栈
 
@@ -103,19 +106,39 @@ go run ./internal
 
 ### 本地命令
 
-以 `niuf` 开头的消息会被识别为本地命令，由机器人本地处理。
+发送"小牛"会被识别为本地命令，由机器人本地处理。
+
+### 对话历史
+
+- **私聊历史**：每个用户的私聊对话历史会保存在 `data/user_{QQ号}.json`
+- **群聊上下文**：每个群的对话上下文会保存在 `data/group_{群号}.json`
+- **昵称映射**：每个群的用户昵称映射会保存在 `data/group_{群号}_nicknames.json`
 
 ## 项目结构
 
 ```
 QQBot-with-DeepSeek/
 ├── internal/              # 源代码目录
-│   ├── main.go           # 主程序入口
-│   ├── local_command.go  # 本地命令处理模块
-│   ├── deepseek.go       # DeepSeek AI 对话模块
-│   └── repeat_message.go # 重复消息检测模块
+│   ├── main.go          # 主程序入口（WebSocket、事件分发）
+│   ├── common/          # 共享基础包
+│   │   ├── types.go     # 共享类型定义（QQEvent）
+│   │   ├── config.go    # 配置变量（环境变量、常量）
+│   │   └── sender.go    # 消息发送函数
+│   ├── deepseek/        # DeepSeek AI 模块
+│   │   ├── handler.go   # 事件处理函数（HandleAIChat、HandleAtMasterChat）
+│   │   ├── api.go       # API 调用函数
+│   │   └── should.go    # 判断函数（ShouldHandleAIChat、ShouldHandleAtMasterChat）
+│   ├── local/            # 本地逻辑模块
+│   │   ├── command.go   # 本地命令处理
+│   │   └── repeat.go    # 重复消息检测
+│   └── storage/          # 数据存储模块
+│       └── conversation.go # 对话历史、昵称映射管理
 ├── bin/                  # 编译输出目录
 │   └── QQBot.exe         # 编译后的可执行文件
+├── data/                 # 数据存储目录（自动创建）
+│   ├── user_*.json      # 私聊对话历史
+│   ├── group_*.json     # 群聊上下文
+│   └── group_*_nicknames.json # 群昵称映射
 ├── go.mod                # Go 模块依赖
 ├── go.sum                # 依赖校验文件
 └── README.md             # 项目说明文档
@@ -123,26 +146,52 @@ QQBot-with-DeepSeek/
 
 ## 开发说明
 
-### 核心模块
+### 架构设计
 
-- **事件分发器**：`dispatch()` 函数处理消息分发逻辑（位于 `internal/main.go`）
-- **AI 对话处理**：`HandleAIChat()` 函数处理 AI 对话请求（位于 `internal/deepseek.go`）
-- **本地命令处理**：`HandleLocalCommand()` 函数处理本地命令（位于 `internal/local_command.go`）
-- **重复消息检测**：`HandleRepeatMessage()` 函数处理连续相同消息（位于 `internal/repeat_message.go`）
-- **WebSocket 通信**：`wsHandler()` 函数处理 WebSocket 连接（位于 `internal/main.go`）
+项目采用模块化设计，按功能划分为多个包：
+
+- **`common` 包**：提供共享的基础功能
+  - `types.go`：定义 `QQEvent` 等共享类型
+  - `config.go`：管理环境变量和配置常量
+  - `sender.go`：提供统一的消息发送接口
+
+- **`deepseek` 包**：处理所有 AI 相关逻辑
+  - `handler.go`：`HandleAIChat()` 处理普通 AI 对话，`HandleAtMasterChat()` 处理@主人的情况
+  - `api.go`：`callDeepSeekAPI()` 实际调用 DeepSeek API
+  - `should.go`：判断是否应该处理 AI 相关事件
+
+- **`local` 包**：处理不需要 AI 的本地逻辑
+  - `command.go`：处理本地命令（如"小牛"）
+  - `repeat.go`：检测并处理重复消息
+
+- **`storage` 包**：管理数据存储
+  - `conversation.go`：管理私聊对话历史、群聊上下文、昵称映射
+
+### 核心流程
+
+1. **消息接收**：`main.go` 的 `wsHandler()` 接收 WebSocket 消息
+2. **事件解析**：`parseEvent()` 解析消息并提取信息
+3. **事件分发**：`dispatch()` 根据消息类型分发到不同模块
+4. **模块处理**：各模块根据职责处理相应事件
+5. **消息发送**：通过 `common.SendReply()` 统一发送回复
 
 ### 自定义修改
 
-- **监听端口**：修改 `internal/main.go` 中的 `ListenPort` 常量（默认：`:8080`）
-- **AI 模型**：修改 `internal/deepseek.go` 中的 `callDeepSeek()` 函数内的 `model` 参数（默认：`deepseek-chat`）
-- **系统提示词**：修改 `internal/deepseek.go` 中的 `callDeepSeek()` 函数内的 `systemMessage`
-- **重复消息队列大小**：修改 `internal/main.go` 中的 `RepeatMessageQueueSize` 常量（默认：`3`）
+- **监听端口**：修改 `internal/common/config.go` 中的 `ListenPort` 常量（默认：`:8080`）
+- **AI 模型**：修改 `internal/deepseek/api.go` 中的 `deepSeekModel` 常量（默认：`deepseek-chat`）
+- **系统提示词**：修改 `internal/deepseek/api.go` 中的 `systemPromptBase`、`groupChatContext` 等常量
+- **重复消息队列大小**：修改 `internal/common/config.go` 中的 `RepeatMessageQueueSize` 常量（默认：`3`）
+- **历史消息数量**：修改 `internal/storage/conversation.go` 中的 `MaxHistoryMessages` 和 `MaxGroupContextMessages` 常量（默认：`50`）
+- **消息长度限制**：修改 `internal/storage/conversation.go` 中的 `MaxMessageLength` 常量（默认：`500`）
 
 ## 注意事项
 
 - 确保 DeepSeek API Key 有效且有足够的额度
-- 建议设置 `BOT_QQ` 和 `MASTER_QQ` 环境变量以获得更好的体验
+- 建议设置 `BOT_QQ`、`MASTER_QQ` 环境变量以获得更好的体验
 - WebSocket 连接断开后会自动重连（需要 NapCat 支持）
+- 对话历史文件会自动保存在 `data/` 目录下，请确保有写入权限
+- 群聊上下文和昵称映射会持久化存储，重启后自动恢复
+- 超长消息（超过 500 字符）不会加入群聊上下文，但仍会触发其他功能
 
 ## 贡献
 
