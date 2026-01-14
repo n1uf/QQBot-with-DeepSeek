@@ -88,9 +88,7 @@ func GetGroupContextForAI(groupID int64) (context string, lastMessage *GroupCont
 	// 构建上下文消息（使用元数据标签格式）
 	contextMsg := "群聊消息：\n"
 	for _, msg := range contextMessages {
-		roleTag := GetRoleTag(msg.UserID)
-		nickname := GetNickname(groupID, msg.UserID)
-		contextMsg += fmt.Sprintf("【%s】%s 发言说: %s\n", roleTag, nickname, msg.Content)
+		contextMsg += FormatGroupMessage(groupID, msg.UserID, msg.Content) + "\n"
 	}
 
 	return contextMsg, lastMsg

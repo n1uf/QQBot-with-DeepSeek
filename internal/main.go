@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gorilla/websocket"
@@ -60,21 +61,7 @@ func parseEvent(raw map[string]interface{}) common.QQEvent {
 		ev.GroupID = int64(gid)
 	}
 
-	ev.RawContent, _ = raw["raw_message"].(string)
-
-	// 增强清理逻辑：移除所有 [CQ:...] 标签
-	ev.Content = ev.RawContent
-	for strings.Contains(ev.Content, "[CQ:") {
-		start := strings.Index(ev.Content, "[CQ:")
-		end := strings.Index(ev.Content[start:], "]")
-		if end == -1 {
-			break
-		}
-		ev.Content = ev.Content[:start] + ev.Content[start+end+1:]
-	}
-	ev.Content = strings.TrimSpace(ev.Content)
-
-	// 提取昵称并更新映射（群聊时）
+	// 先更新发送者的昵称映射（群聊时），这样如果消息中 @ 的是发送者自己，就能用最新昵称
 	if ev.MsgType == "group" && ev.GroupID > 0 && ev.UserID > 0 {
 		nickname := extractNickname(raw)
 		if nickname != "" {
@@ -82,13 +69,91 @@ func parseEvent(raw map[string]interface{}) common.QQEvent {
 		} else {
 			log.Printf("[DEBUG] 未提取到昵称: 群%d 用户%d，将使用稳定标识符", ev.GroupID, ev.UserID)
 		}
-		// 添加到群聊上下文（所有群聊消息都添加）
-		if ev.Content != "" && ev.UserID != common.BotQQNumber {
-			storage.AddGroupContextMessage(ev.GroupID, ev.UserID, ev.Content)
-		}
+	}
+
+	// 解析消息内容（array 格式）
+	ev.RawContent, ev.Content, ev.AtType = parseMessageArray(raw, ev.GroupID)
+
+	// 添加到群聊上下文（所有群聊消息都添加）
+	if ev.MsgType == "group" && ev.GroupID > 0 && ev.Content != "" && ev.UserID != common.BotQQNumber {
+		storage.AddGroupContextMessage(ev.GroupID, ev.UserID, ev.Content)
 	}
 
 	return ev
+}
+
+// parseMessageArray 解析消息数组（array 格式）
+// 返回：原始 JSON、解析后的内容、@类型
+func parseMessageArray(raw map[string]interface{}, groupID int64) (rawJSON string, content string, atType int) {
+	msgArray, ok := raw["message"].([]interface{})
+	if !ok {
+		// 保存原始 JSON 用于调试
+		if jsonBytes, err := json.Marshal(raw["message"]); err == nil {
+			rawJSON = string(jsonBytes)
+		}
+		return rawJSON, "", common.AtNone
+	}
+
+	// 保存原始 JSON 用于调试
+	if jsonBytes, err := json.Marshal(msgArray); err == nil {
+		rawJSON = string(jsonBytes)
+	}
+
+	var contentParts []string
+	atType = common.AtNone
+
+	// 遍历消息数组，按顺序处理
+	for _, item := range msgArray {
+		if msgObj, ok := item.(map[string]interface{}); ok {
+			msgType, _ := msgObj["type"].(string)
+			switch msgType {
+			case "at":
+				// 处理 @ 消息
+				if data, ok := msgObj["data"].(map[string]interface{}); ok {
+					var atQQ int64
+					if qqStr, ok := data["qq"].(string); ok {
+						// 尝试解析字符串格式的 QQ 号
+						if qq, err := strconv.ParseInt(qqStr, 10, 64); err == nil {
+							atQQ = qq
+						}
+					} else if qq, ok := data["qq"].(float64); ok {
+						atQQ = int64(qq)
+					}
+
+					if atQQ > 0 {
+						// 判断 @ 的类型（优先级：主人 > 机器人 > 其他人）
+						if common.MasterQQNumber > 0 && atQQ == common.MasterQQNumber {
+							if atType == common.AtNone || atType == common.AtOthers {
+								atType = common.AtMaster
+							}
+						} else if common.BotQQNumber > 0 && atQQ == common.BotQQNumber {
+							if atType == common.AtNone || atType == common.AtOthers {
+								atType = common.AtBot
+							}
+						} else {
+							if atType == common.AtNone {
+								atType = common.AtOthers
+							}
+						}
+
+						// 格式化 @ 消息：@【角色标签】昵称
+						contentParts = append(contentParts, storage.FormatAtMessage(groupID, atQQ))
+					}
+				}
+			case "text":
+				// 处理文本消息
+				if data, ok := msgObj["data"].(map[string]interface{}); ok {
+					if text, ok := data["text"].(string); ok {
+						contentParts = append(contentParts, text)
+					}
+				}
+				// 其他类型（face、image 等）跳过
+			}
+		}
+	}
+
+	content = strings.TrimSpace(strings.Join(contentParts, ""))
+	return rawJSON, content, atType
 }
 
 // extractNickname 从消息中提取昵称
@@ -132,6 +197,9 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		var raw map[string]interface{}
 		if err := json.Unmarshal(msg, &raw); err == nil {
 			if pt, _ := raw["post_type"].(string); pt == "message" {
+				// 打印原始消息用于调试
+				//rawJSON, _ := json.MarshalIndent(raw, "", "  ")
+				//log.Printf("[DEBUG] 收到原始消息:\n%s\n", rawJSON)
 				dispatch(parseEvent(raw))
 			}
 		}

@@ -19,6 +19,20 @@ func GetRoleTag(userID int64) string {
 	return "普通群友"
 }
 
+// FormatAtMessage 格式化 @ 消息：@【角色标签】昵称
+func FormatAtMessage(groupID int64, userID int64) string {
+	roleTag := GetRoleTag(userID)
+	nickname := GetNickname(groupID, userID)
+	return fmt.Sprintf("@【%s】%s", roleTag, nickname)
+}
+
+// FormatGroupMessage 格式化群聊消息：【角色标签】昵称 发言说: 内容
+func FormatGroupMessage(groupID int64, userID int64, content string) string {
+	roleTag := GetRoleTag(userID)
+	nickname := GetNickname(groupID, userID)
+	return fmt.Sprintf("【%s】%s 发言说: %s", roleTag, nickname, content)
+}
+
 // getUserStableID 获取用户的稳定标识符（基于QQ号的哈希，如"用户AA"）
 // 使用MD5哈希确保同一QQ号总是得到相同的标识符
 // 使用两个字母（AA-ZZ）可以支持最多676个用户

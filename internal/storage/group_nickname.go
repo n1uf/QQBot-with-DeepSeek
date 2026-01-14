@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"QQBot/internal/common"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -46,6 +47,9 @@ func UpdateNicknameMap(groupID int64, userID int64, nickname string) {
 // groupID=0 表示私聊，直接返回稳定标识符（私聊不需要昵称）
 // 注意：不再在昵称后追加身份标识，身份由 GetRoleTag() 单独提供
 func GetNickname(groupID int64, userID int64) string {
+	if userID == common.BotQQNumber || userID == 0 {
+		return "小牛"
+	}
 	if groupID == 0 {
 		// 私聊直接返回稳定标识符
 		return getUserStableID(userID)
