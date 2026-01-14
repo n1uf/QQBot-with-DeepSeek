@@ -4,92 +4,52 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/gorilla/websocket"
-)
 
-// --- 配置区域 ---
-const (
-	ListenPort             = ":8080"
-	DeepSeekBaseURL        = "https://api.deepseek.com/chat/completions"
-	RepeatMessageQueueSize = 3 // 连续相同消息检测队列大小
+	"QQBot/internal/common"
+	"QQBot/internal/deepseek"
+	"QQBot/internal/local"
+	"QQBot/internal/storage"
 )
-
-type QQEvent struct {
-	MsgType    string
-	UserID     int64
-	GroupID    int64
-	Content    string // 过滤过CQ码消息后的内容
-	RawContent string // 原始消息
-}
 
 var (
-	upgrader                 = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
-	wsConn                   *websocket.Conn
-	connMu                   sync.Mutex
-	DeepSeekAPIKey           string
-	BotQQNumber              int64
-	MasterQQNumber           int64
-	MasterGirlFriendQQNumber int64
+	upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 )
-
-func init() {
-	DeepSeekAPIKey = os.Getenv("DEEPSEEK_API_KEY")
-
-	// 尝试读取并转换，如果失败则给个提醒
-	botQQStr := os.Getenv("BOT_QQ")
-	masterQQStr := os.Getenv("MASTER_QQ")
-	masterGirlFriendQQStr := os.Getenv("MASTER_GIRL_FRIEND_QQ")
-
-	if botQQStr == "" || masterQQStr == "" || masterGirlFriendQQStr == "" {
-		log.Println("⚠️  警告: BOT_QQ 或 MASTER_QQ 或 MASTER_GIRL_FRIEND_QQ 未设置，机器人可能无法识别艾特或主人身份")
-	}
-
-	BotQQNumber, _ = strconv.ParseInt(botQQStr, 10, 64)
-	MasterQQNumber, _ = strconv.ParseInt(masterQQStr, 10, 64)
-	MasterGirlFriendQQNumber, _ = strconv.ParseInt(masterGirlFriendQQStr, 10, 64)
-}
 
 // --- 逻辑分发器 ---
 
-func dispatch(event QQEvent) {
+func dispatch(event common.QQEvent) {
 	// 0. 检查连续相同消息（仅群聊）
-	if ShouldHandleRepeatMessage(event) {
-		if HandleRepeatMessage(event) {
+	if local.ShouldHandleRepeatMessage(event) {
+		if local.HandleRepeatMessage(event) {
 			return // 如果触发了重复消息回复，不再处理其他逻辑
 		}
 	}
 
 	// 1. 本地指令
-	if ShouldHandleLocalCommand(event.Content) {
-		HandleLocalCommand(event)
+	if local.ShouldHandleLocalCommand(event.Content) {
+		local.HandleLocalCommand(event)
 		return
 	}
 
 	// 2. 群聊中@主人（优先级高于普通AI对话）
-	if ShouldHandleAtMasterChat(event) {
-		go HandleAtMasterChat(event)
+	if deepseek.ShouldHandleAtMasterChat(event) {
+		go deepseek.HandleAtMasterChat(event)
 		return
 	}
 
 	// 3. AI 对话
-	if ShouldHandleAIChat(event) {
-		//if event.Content == "" {
-		//	sendReply(event, "干嘛？艾特我又不说话，是不是想我了？")
-		//	return
-		//}
-		go HandleAIChat(event)
+	if deepseek.ShouldHandleAIChat(event) {
+		go deepseek.HandleAIChat(event)
 	}
 }
 
 // --- 通信处理 ---
 
-func parseEvent(raw map[string]interface{}) QQEvent {
-	ev := QQEvent{}
+func parseEvent(raw map[string]interface{}) common.QQEvent {
+	ev := common.QQEvent{}
 	ev.MsgType, _ = raw["message_type"].(string)
 
 	// 处理 JSON 中的数字类型
@@ -118,13 +78,13 @@ func parseEvent(raw map[string]interface{}) QQEvent {
 	if ev.MsgType == "group" && ev.GroupID > 0 && ev.UserID > 0 {
 		nickname := extractNickname(raw)
 		if nickname != "" {
-			updateNicknameMap(ev.GroupID, ev.UserID, nickname)
+			storage.UpdateNicknameMap(ev.GroupID, ev.UserID, nickname)
 		} else {
 			log.Printf("[DEBUG] 未提取到昵称: 群%d 用户%d，将使用稳定标识符", ev.GroupID, ev.UserID)
 		}
 		// 添加到群聊上下文（所有群聊消息都添加）
-		if ev.Content != "" && ev.UserID != BotQQNumber {
-			addGroupContextMessage(ev.GroupID, ev.UserID, ev.Content)
+		if ev.Content != "" && ev.UserID != common.BotQQNumber {
+			storage.AddGroupContextMessage(ev.GroupID, ev.UserID, ev.Content)
 		}
 	}
 
@@ -147,30 +107,6 @@ func extractNickname(raw map[string]interface{}) string {
 	return ""
 }
 
-func sendReply(e QQEvent, text string) {
-	connMu.Lock()
-	defer connMu.Unlock()
-	if wsConn == nil {
-		log.Println("[警告] 发送失败：WebSocket 连接为空")
-		return
-	}
-
-	payload := map[string]interface{}{
-		"action": "send_msg",
-		"params": map[string]interface{}{
-			"message_type": e.MsgType,
-			"user_id":      e.UserID,
-			"group_id":     e.GroupID,
-			"message":      text,
-		},
-	}
-
-	if err := wsConn.WriteJSON(payload); err != nil {
-		log.Printf("[发送失败]: %v", err)
-	}
-	log.Printf("[发送] -> 用户:%d 内容:%s", e.UserID, text)
-}
-
 func wsHandler(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -178,16 +114,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connMu.Lock()
-	wsConn = conn
-	connMu.Unlock()
+	common.SetWebSocketConn(conn)
 
 	log.Println("✨ NapCat 成功连接")
 
 	defer func() {
-		connMu.Lock()
-		wsConn = nil
-		connMu.Unlock()
+		common.ClearWebSocketConn()
 		conn.Close()
 	}()
 
@@ -207,12 +139,12 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	if DeepSeekAPIKey == "" {
+	if common.DeepSeekAPIKey == "" {
 		log.Fatal("错误：未找到环境变量 DEEPSEEK_API_KEY，请先设置！")
 	}
 	http.HandleFunc("/ws", wsHandler)
-	log.Printf("🤖 小牛系统已就绪，端口%s", ListenPort)
-	if err := http.ListenAndServe(ListenPort, nil); err != nil {
+	log.Printf("🤖 小牛系统已就绪，端口%s", common.ListenPort)
+	if err := http.ListenAndServe(common.ListenPort, nil); err != nil {
 		log.Fatal("服务器启动失败: ", err)
 	}
 }

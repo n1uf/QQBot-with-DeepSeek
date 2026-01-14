@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"crypto/md5"
@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"QQBot/internal/common"
 )
 
 const (
@@ -65,8 +67,8 @@ var (
 	groupNicknameMap sync.Map // map[int64]*GroupNicknameMap
 )
 
-// getOrCreateConversation 获取或创建用户的对话历史
-func getOrCreateConversation(userID int64) *Conversation {
+// GetOrCreateConversation 获取或创建用户的对话历史
+func GetOrCreateConversation(userID int64) *Conversation {
 	// 先从内存中查找
 	if convInterface, ok := privateConversations.Load(userID); ok {
 		return convInterface.(*Conversation)
@@ -87,8 +89,8 @@ func getOrCreateConversation(userID int64) *Conversation {
 	return conv
 }
 
-// addUserMessage 添加用户消息到历史
-func (c *Conversation) addUserMessage(content string) {
+// AddUserMessage 添加用户消息到历史
+func (c *Conversation) AddUserMessage(content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -103,8 +105,8 @@ func (c *Conversation) addUserMessage(content string) {
 	c.limitHistory()
 }
 
-// addAssistantMessage 添加助手回复到历史
-func (c *Conversation) addAssistantMessage(content string) {
+// AddAssistantMessage 添加助手回复到历史
+func (c *Conversation) AddAssistantMessage(content string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -122,8 +124,8 @@ func (c *Conversation) addAssistantMessage(content string) {
 	go c.saveToFile()
 }
 
-// getMessages 获取所有消息（用于 API 调用）
-func (c *Conversation) getMessages() []map[string]string {
+// GetMessages 获取所有消息（用于 API 调用）
+func (c *Conversation) GetMessages() []map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -188,41 +190,8 @@ func loadConversationFromFile(userID int64) *Conversation {
 	return &conv
 }
 
-// clearConversation 清空用户的对话历史（用于测试或重置）
-// 注意：此函数当前未被使用，保留用于调试或管理功能
-func clearConversation(userID int64) {
-	privateConversations.Delete(userID)
-	filename := filepath.Join(HistoryDataDir, fmt.Sprintf("user_%d.json", userID))
-	os.Remove(filename)
-	log.Printf("[对话历史] 已清空用户 %d 的对话历史", userID)
-}
-
-// --- 昵称映射管理（持久化）---
-
-// getOrCreateGroupNicknameMap 获取或创建群的昵称映射（从文件加载）
-func getOrCreateGroupNicknameMap(groupID int64) *GroupNicknameMap {
-	// 先从内存中查找
-	if mapInterface, ok := groupNicknameMap.Load(groupID); ok {
-		return mapInterface.(*GroupNicknameMap)
-	}
-
-	// 尝试从文件加载
-	nm := loadGroupNicknameMapFromFile(groupID)
-	if nm == nil {
-		// 创建新的昵称映射
-		nm = &GroupNicknameMap{
-			GroupID:   groupID,
-			Nicknames: make(map[int64]string),
-		}
-	}
-
-	// 存储到内存
-	groupNicknameMap.Store(groupID, nm)
-	return nm
-}
-
-// updateNicknameMap 更新昵称映射（按群分开，自动保存）
-func updateNicknameMap(groupID int64, userID int64, nickname string) {
+// UpdateNicknameMap 更新昵称映射（按群分开，自动保存）
+func UpdateNicknameMap(groupID int64, userID int64, nickname string) {
 	if nickname == "" || groupID == 0 {
 		return
 	}
@@ -242,9 +211,9 @@ func updateNicknameMap(groupID int64, userID int64, nickname string) {
 	go nm.saveToFile()
 }
 
-// getNickname 获取用户昵称，如果不存在则返回稳定标识符
+// GetNickname 获取用户昵称，如果不存在则返回稳定标识符
 // groupID=0 表示私聊，直接返回稳定标识符（私聊不需要昵称）
-func getNickname(groupID int64, userID int64) string {
+func GetNickname(groupID int64, userID int64) string {
 	var nickname string
 
 	if groupID == 0 {
@@ -263,9 +232,9 @@ func getNickname(groupID int64, userID int64) string {
 	}
 
 	// 特殊处理：如果是主人女朋友，在昵称后加上标识
-	if userID == MasterGirlFriendQQNumber && MasterGirlFriendQQNumber > 0 {
+	if userID == common.MasterGirlFriendQQNumber && common.MasterGirlFriendQQNumber > 0 {
 		return fmt.Sprintf("%s（主人的女朋友）", nickname)
-	} else if userID == MasterQQNumber && MasterQQNumber > 0 {
+	} else if userID == common.MasterQQNumber && common.MasterQQNumber > 0 {
 		return fmt.Sprintf("%s（主人）", nickname)
 	}
 
@@ -294,35 +263,30 @@ func getUserStableID(userID int64) string {
 	return stableID
 }
 
-// --- 群聊上下文管理（持久化）---
-
-// getOrCreateGroupContext 获取或创建群聊上下文（从文件加载）
-func getOrCreateGroupContext(groupID int64) *GroupContext {
+// getOrCreateGroupNicknameMap 获取或创建群的昵称映射（从文件加载）
+func getOrCreateGroupNicknameMap(groupID int64) *GroupNicknameMap {
 	// 先从内存中查找
-	if ctxInterface, ok := groupContexts.Load(groupID); ok {
-		return ctxInterface.(*GroupContext)
+	if mapInterface, ok := groupNicknameMap.Load(groupID); ok {
+		return mapInterface.(*GroupNicknameMap)
 	}
 
 	// 尝试从文件加载
-	ctx := loadGroupContextFromFile(groupID)
-	if ctx == nil {
-		// 创建新的上下文
-		ctx = &GroupContext{
-			GroupID:  groupID,
-			Messages: make([]GroupContextMessage, 0, MaxGroupContextMessages),
+	nm := loadGroupNicknameMapFromFile(groupID)
+	if nm == nil {
+		// 创建新的昵称映射
+		nm = &GroupNicknameMap{
+			GroupID:   groupID,
+			Nicknames: make(map[int64]string),
 		}
-		log.Printf("[DEBUG] [群聊上下文] 创建新上下文: 群%d", groupID)
-	} else {
-		log.Printf("[DEBUG] [群聊上下文] 加载上下文: 群%d, 消息数 %d", groupID, len(ctx.Messages))
 	}
 
 	// 存储到内存
-	groupContexts.Store(groupID, ctx)
-	return ctx
+	groupNicknameMap.Store(groupID, nm)
+	return nm
 }
 
-// addGroupContextMessage 添加群聊消息到上下文
-func addGroupContextMessage(groupID int64, userID int64, content string) {
+// AddGroupContextMessage 添加群聊消息到上下文
+func AddGroupContextMessage(groupID int64, userID int64, content string) {
 	if groupID == 0 || content == "" {
 		return
 	}
@@ -356,9 +320,9 @@ func addGroupContextMessage(groupID int64, userID int64, content string) {
 	log.Printf("[DEBUG] [群聊上下文] 群%d: 消息数 %d", groupID, len(ctx.Messages))
 }
 
-// getGroupContextForAI 获取群聊上下文（转换为AI格式）
+// GetGroupContextForAI 获取群聊上下文（转换为AI格式）
 // 返回除最后一条外的所有消息作为上下文，最后一条作为当前消息
-func getGroupContextForAI(groupID int64) (context string, lastMessage *GroupContextMessage) {
+func GetGroupContextForAI(groupID int64) (context string, lastMessage *GroupContextMessage) {
 	ctx := getOrCreateGroupContext(groupID)
 
 	ctx.mu.RLock()
@@ -381,15 +345,40 @@ func getGroupContextForAI(groupID int64) (context string, lastMessage *GroupCont
 	contextMsg := "群聊消息：\n"
 	for _, msg := range contextMessages {
 		// 如果是AI自己的消息，用"你:"标识
-		if msg.UserID == BotQQNumber || msg.UserID == 0 {
-			contextMsg += fmt.Sprintf("- 你: %s\n", msg.Content)
+		if msg.UserID == common.BotQQNumber || msg.UserID == 0 {
+			contextMsg += fmt.Sprintf("- [你]: %s\n", msg.Content)
 		} else {
-			nickname := getNickname(groupID, msg.UserID)
+			nickname := GetNickname(groupID, msg.UserID)
 			contextMsg += fmt.Sprintf("- [%s]: %s\n", nickname, msg.Content)
 		}
 	}
 
 	return contextMsg, lastMsg
+}
+
+// getOrCreateGroupContext 获取或创建群聊上下文（从文件加载）
+func getOrCreateGroupContext(groupID int64) *GroupContext {
+	// 先从内存中查找
+	if ctxInterface, ok := groupContexts.Load(groupID); ok {
+		return ctxInterface.(*GroupContext)
+	}
+
+	// 尝试从文件加载
+	ctx := loadGroupContextFromFile(groupID)
+	if ctx == nil {
+		// 创建新的上下文
+		ctx = &GroupContext{
+			GroupID:  groupID,
+			Messages: make([]GroupContextMessage, 0, MaxGroupContextMessages),
+		}
+		log.Printf("[DEBUG] [群聊上下文] 创建新上下文: 群%d", groupID)
+	} else {
+		log.Printf("[DEBUG] [群聊上下文] 加载上下文: 群%d, 消息数 %d", groupID, len(ctx.Messages))
+	}
+
+	// 存储到内存
+	groupContexts.Store(groupID, ctx)
+	return ctx
 }
 
 // saveToFile 保存群聊上下文到文件

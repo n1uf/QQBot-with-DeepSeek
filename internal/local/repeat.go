@@ -1,8 +1,10 @@
-package main
+package local
 
 import (
 	"log"
 	"sync"
+
+	"QQBot/internal/common"
 )
 
 // 消息队列结构，用于检测连续相同消息
@@ -17,15 +19,15 @@ var (
 
 // HandleRepeatMessage 处理连续相同消息检测
 // 返回 true 表示已处理（发送了重复消息），false 表示未触发
-func HandleRepeatMessage(event QQEvent) bool {
+func HandleRepeatMessage(event common.QQEvent) bool {
 	// 1. 过滤条件：跳过机器人自己的消息、空消息
-	if event.UserID == BotQQNumber || event.Content == "" {
+	if event.UserID == common.BotQQNumber || event.Content == "" {
 		return false
 	}
 
 	// 2. 获取或创建该群的消息队列
 	queueInterface, _ := groupQueues.LoadOrStore(event.GroupID, &messageQueue{
-		messages: make([]string, 0, RepeatMessageQueueSize),
+		messages: make([]string, 0, common.RepeatMessageQueueSize),
 	})
 	queue := queueInterface.(*messageQueue)
 
@@ -37,12 +39,12 @@ func HandleRepeatMessage(event QQEvent) bool {
 	queue.messages = append(queue.messages, event.Content)
 
 	// 保持队列大小不超过 RepeatMessageQueueSize
-	if len(queue.messages) > RepeatMessageQueueSize {
-		queue.messages = queue.messages[len(queue.messages)-RepeatMessageQueueSize:]
+	if len(queue.messages) > common.RepeatMessageQueueSize {
+		queue.messages = queue.messages[len(queue.messages)-common.RepeatMessageQueueSize:]
 	}
 
 	// 4. 检查是否达到触发条件（队列中所有消息都相同）
-	if len(queue.messages) == RepeatMessageQueueSize {
+	if len(queue.messages) == common.RepeatMessageQueueSize {
 		allSame := true
 		firstMsg := queue.messages[0]
 		for i := 1; i < len(queue.messages); i++ {
@@ -55,9 +57,9 @@ func HandleRepeatMessage(event QQEvent) bool {
 		if allSame {
 			// 清空队列，避免重复触发
 			queue.messages = queue.messages[:0]
-			log.Printf("[重复消息] 群 %d 检测到连续 %d 条相同消息: %s", event.GroupID, RepeatMessageQueueSize, firstMsg)
+			log.Printf("[重复消息] 群 %d 检测到连续 %d 条相同消息: %s", event.GroupID, common.RepeatMessageQueueSize, firstMsg)
 			// 发送相同消息
-			sendReply(event, firstMsg)
+			common.SendReply(event, firstMsg)
 			return true
 		}
 	}
@@ -66,6 +68,6 @@ func HandleRepeatMessage(event QQEvent) bool {
 }
 
 // ShouldHandleRepeatMessage 判断是否应该处理重复消息检测（仅群聊）
-func ShouldHandleRepeatMessage(event QQEvent) bool {
+func ShouldHandleRepeatMessage(event common.QQEvent) bool {
 	return event.MsgType == "group" && event.GroupID > 0
 }
