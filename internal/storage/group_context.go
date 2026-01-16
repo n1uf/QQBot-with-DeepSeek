@@ -55,13 +55,13 @@ func AddGroupContextMessage(groupID int64, userID int64, content string) {
 
 	// 限制长度
 	if len(ctx.Messages) > MaxGroupContextMessages {
-		log.Printf("[DEBUG] [群聊上下文] 群%d: 消息数 %d -> %d (截断)", groupID, len(ctx.Messages), MaxGroupContextMessages)
+		// log.Printf("[DEBUG] [群聊上下文] 群%d: 消息数 %d -> %d (截断)", groupID, len(ctx.Messages), MaxGroupContextMessages)
 		ctx.Messages = ctx.Messages[len(ctx.Messages)-MaxGroupContextMessages:]
 	}
 
 	// 保存到文件
 	go ctx.saveToFile()
-	log.Printf("[DEBUG] [群聊上下文] 群%d: 消息数 %d", groupID, len(ctx.Messages))
+	// log.Printf("[DEBUG] [群聊上下文] 群%d: 消息数 %d", groupID, len(ctx.Messages))
 }
 
 // GetGroupContextForAI 获取群聊上下文（转换为AI格式）
@@ -140,7 +140,7 @@ func (c *GroupContext) saveToFile() {
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		log.Printf("[群聊上下文] 保存文件失败: %v", err)
 	}
-	log.Printf("[DEBUG] [群聊上下文] 群%d: 已保存到文件", c.GroupID)
+	// log.Printf("[DEBUG] [群聊上下文] 群%d: 已保存到文件", c.GroupID)
 }
 
 // loadGroupContextFromFile 从文件加载群聊上下文

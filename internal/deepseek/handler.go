@@ -34,7 +34,7 @@ func HandleAIChat(event common.QQEvent) {
 
 // HandleAtMasterChat 处理群聊中@主人的情况
 func HandleAtMasterChat(event common.QQEvent) {
-	hint := "当前有人在群里@了你的主人（爸爸） niuf，请帮他回复一下，语气要友好。"
+	hint := "当前有人在群里@了你的主人（爸爸） niuf ，你需要转告给 niuf ，并总结一下群友@niuf的原因"
 
 	log.Printf("[@主人] <- 群:%d 用户:%d 内容:%s", event.GroupID, event.UserID, event.Content)
 
@@ -49,7 +49,14 @@ func HandleAtMasterChat(event common.QQEvent) {
 		return
 	}
 
-	common.SendReply(event, answer)
+	// 构造私信事件，发送给主人
+	privateEvent := common.QQEvent{
+		MsgType: "private",
+		UserID:  common.MasterQQNumber,
+		GroupID: 0,
+		Content: answer,
+	}
+	common.SendReply(privateEvent, answer)
 }
 
 // getUserRoleHint 根据用户ID获取角色提示
@@ -57,13 +64,13 @@ func getUserRoleHint(userID int64) string {
 	switch userID {
 	case common.MasterQQNumber:
 		// 对爸爸的特殊态度
-		return "现在说话的是你的爸爸 niuf。你要对他撒娇、关心他的身体，表现出最爱爸爸的样子。"
+		return "现在说话的是你的爸爸 niuf。"
 	case common.MasterGirlFriendQQNumber:
 		// 对爸爸女朋友的态度
-		return "现在说话的是爸爸的女朋友。你要表现得非常有礼貌，像对待家人一样尊重她，你可以称呼她为妈妈或者符合她身份的称呼。"
+		return "现在说话的是爸爸的女朋友，要有礼貌"
 	default:
 		// 对普通人的态度
-		return "现在说话的是一位普通客人。你要保持乖巧懂事的形象，礼貌地提供帮助。"
+		return "现在说话的是爸爸的朋友。请乖巧懂事，并礼貌地提供帮助。"
 	}
 }
 
